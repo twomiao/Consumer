@@ -1,0 +1,10 @@
+{
+  "require": {
+    "ext-pcntl": "*"
+  },
+  "autoload": {
+    "psr-4": {
+      "Consumer\\": "Consumer/"
+    }
+  }
+}
