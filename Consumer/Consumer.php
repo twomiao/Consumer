@@ -53,6 +53,12 @@ abstract class Consumer
     protected static $pidFile;
 
     /**
+     * 标准重定向输入输出
+     * @var string
+     */
+    protected static $stdoutFile = '/dev/null';
+
+    /**
      * 创建指定常驻进程数量
      * @var int
      */
@@ -63,11 +69,13 @@ abstract class Consumer
      * @var array $config
      */
     protected $config = [
-        'memory_limit'  => 128,// 128mb
-        'max_consumers' => 8, // 临时+常驻消费者最多：8个
-        'task_timeout'  => 30, // 任务从队列消费超30秒，消费者退出并记录数据
-        'idle_time'     => 30, // 临时消费者空闲30秒没任务，自动退出节约资源
-        ''
+        'memory_limit' => 128,// 128mb
+        'max_consumers'=> 8, // 临时+常驻消费者最多：8个
+        'task_timeout' => 30, // 任务从队列消费超30秒，消费者退出并记录数据
+        'idle_time'    => 30, // 临时消费者空闲30秒没任务，自动退出节约资源
+        'user'         => '', // 用户
+        'user_group'   => '',  // 用户组
+        'daemonize'    => false, // 守护进程
     ];
 
     /**
@@ -79,23 +87,26 @@ abstract class Consumer
      */
     public function __construct($forkNumber, $config = [])
     {
-        $this->forkNumber    = $forkNumber;
-        $this->config        = array_merge($this->config, $config);
-        $this->forkMaxWorker = $this->config['max_consumers'];
+        $this->forkNumber     = $forkNumber;
+        $this->config         = array_merge($this->config, $config);
+        $this->forkMaxWorker  = $this->config['max_consumers'];
+        $this->config['user'] = $this->config['user'] ?: get_current_user();
     }
 
     public function start()
     {
+        pcntl_async_signals(true);
         // 环境监察
         $this->checkSapiEnv();
         $this->init();
-        // 注册异步信号
-        pcntl_async_signals(true);
-
+        $this->daemonize();
         // 创建消费者
-        $this->forkWorkerForLinux(self::RESIDENT_PROCESS, $this->forkNumber);
-
+        $this->forkWorkerForLinux(
+            self::RESIDENT_PROCESS,
+            $this->forkNumber
+        );
         $this->saveMasterPid();
+        $this->resetStd();
         $this->monitorWorkers();
     }
 
@@ -113,24 +124,30 @@ abstract class Consumer
     {
         while ($forkWorkerNum > 0 && count(self::$pidMap) < $this->forkMaxWorker) {
             $pid = pcntl_fork();
-            if ($pid === 0) {
-                // 清理父进程数据
-                self::$pidMap = self::$consumer = [];
-                $processTitle = (Consumer::RESIDENT_PROCESS === $consumerType) ? 'Consumer:worker' : 'Consumer:temp';
-                self::setProcessTitle($processTitle);
+            $retry = 0;
+            do {
+                if ($pid === 0) {
+                    // 清理父进程数据
+                    self::$pidMap = self::$consumer = [];
+                    $processTitle = (Consumer::RESIDENT_PROCESS === $consumerType) ? 'Consumer:worker' : 'Consumer:temp';
+                    self::setProcessTitle($processTitle);
+                    if (self::$status === self::STATUS_STARTING) {
+                        $this->resetStd();
+                    }
+                    // 执行任务
+                    $this->processingWork($consumerType);
 
-                // 执行任务
-                $this->processingWork($consumerType);
-
-                $this->stop();
-            } elseif ($pid) {
-                self::$pidMap[$pid] = $pid;
-                self::$consumer[$pid] = $consumerType;
-                self::$masterPid = getmypid();
-            } else {
-                $this->stop(ExitedCode::FORK_ERROR);
-            }
-            $forkWorkerNum--;
+                    $this->stop();
+                } elseif ($pid) {
+                    self::$pidMap[$pid] = $pid;
+                    self::$consumer[$pid] = $consumerType;
+                    self::$masterPid = getmypid();
+                } else {
+                    $this->stop(ExitedCode::FORK_ERROR);
+                }
+                $forkWorkerNum--;
+                ++$retry;
+            } while ($pid < 0 && $retry < 3);
         }
     }
 
@@ -167,7 +184,7 @@ abstract class Consumer
                 continue;
             }
 
-            $this->registerTimeoutHandler($data);
+            $this->consumerTimeout($data);
 
             $this->fire($data);
 
@@ -178,7 +195,30 @@ abstract class Consumer
 
             // mb 为单位
             $this->memorySizeLimit($this->config['memory_limit']);
+        }
+    }
 
+    /**
+     * 重定向标准输出
+     */
+    public function resetStd()
+    {
+        if ($this->config['daemonize']) {
+            global $STDOUT, $STDERR;
+            $handle = \fopen(static::$stdoutFile, "a");
+            if ($handle) {
+                unset($handle);
+                \set_error_handler(function () {
+                });
+                \fclose(\STDOUT);
+                \fclose(\STDERR);
+                $STDOUT = \fopen(static::$stdoutFile, "a");
+                $STDERR = \fopen(static::$stdoutFile, "a");
+                \restore_error_handler();
+                return;
+            }
+
+            exit('Can not open stdoutFile ' . static::$stdoutFile);
         }
     }
 
@@ -187,7 +227,7 @@ abstract class Consumer
         exit($status);
     }
 
-    protected function registerTimeoutHandler($data)
+    protected function consumerTimeout($data)
     {
         pcntl_signal(SIGALRM, function () use ($data) {
             $pid = getmypid();
@@ -225,7 +265,36 @@ abstract class Consumer
             \chmod($log_file, 0622);
         }
 
+        $this->setUserAndGroup();
+
         static::$status = static::STATUS_STARTING;
+    }
+
+    /**
+     * 守护进程运行.
+     *
+     */
+    protected function daemonize()
+    {
+        if ($this->config['daemonize']) {
+            \umask(0);
+            $pid = \pcntl_fork();
+            if (-1 === $pid) {
+                exit( "Error: Fork fail.\n");
+            } elseif ($pid > 0) {
+                exit(0);
+            }
+            if (-1 === \posix_setsid()) {
+                exit( "Error: Setsid fail.\n");
+            }
+            // Fork again avoid SVR4 system regain the control of terminal.
+            $pid = \pcntl_fork();
+            if (-1 === $pid) {
+                exit( "Error: Fork fail.\n");
+            } elseif (0 !== $pid) {
+                exit(0);
+            }
+        }
     }
 
     // Save pid.
@@ -272,6 +341,43 @@ abstract class Consumer
             \setproctitle($title);
         }
         \restore_error_handler();
+    }
+
+    /**
+     * 设置Unix用户组和用户
+     *
+     * @return void
+     */
+    public function setUserAndGroup()
+    {
+        if (extension_loaded('posix')) {
+            // Get uid.
+            $user_info = \posix_getpwnam($this->config['user']);
+            if (!$user_info) {
+                echo "Warning: User '{$this->config['user']}' not exsits.\n";
+                return;
+            }
+
+            $uid = $user_info['uid'];
+
+            if ($this->config['user_group']) {
+                $group_info = \posix_getgrnam($this->config['user_group']);
+                if (!$group_info) {
+                    echo "Warning: Group '{$this->config['user_group']}' not exsits\n";
+                    return;
+                }
+                $gid = $group_info['gid'];
+            } else {
+                $gid = $user_info['gid'];
+            }
+
+            // Set uid and gid.
+            if ($uid !== \posix_getuid() || $gid !== \posix_getgid()) {
+                if (!\posix_setgid($gid) || !\posix_initgroups($user_info['name'], $gid) || !\posix_setuid($uid)) {
+                    echo "Warning: change gid or uid fail.\n";
+                }
+            }
+        }
     }
 
 
@@ -337,7 +443,7 @@ abstract class Consumer
      */
     private function reboot($status, $pid)
     {
-        if (self::$status !== self::STATUS_STOP && $this->checkRebootStatus($status)) {
+        if (self::$status !== self::STATUS_STOP && $this->checkConsumerRebootStatus($status)) {
             // 重新创建拉取指定类型的消费者进程
             self::forkWorkerForLinux
             (
@@ -353,7 +459,7 @@ abstract class Consumer
      * @param $status
      * @return bool
      */
-    private function checkRebootStatus($status)
+    private function checkConsumerRebootStatus($status)
     {
         $exitedStatus = in_array(
             $status,
@@ -369,7 +475,7 @@ abstract class Consumer
         $consumers = count(self::$pidMap);
 
         $addConsumers = ceil($this->length() / $consumers) - $consumers;
-        if ($addConsumers > 0 && $this->checkRebootStatus($status)) {
+        if ($addConsumers > 0 && $this->checkConsumerRebootStatus($status)) {
             $this->forkWorkerForLinux(self::TEMP_PROCESS);
         }
     }
