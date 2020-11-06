@@ -139,7 +139,7 @@ abstract class Consumer
     /**
      * @param $consumerType
      */
-    final private function processingWork($consumerType)
+    private function processingWork($consumerType)
     {
         if (!is_subclass_of($this, ConnectionInterface::class)) {
             return;
