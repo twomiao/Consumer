@@ -50,7 +50,7 @@ class SmsConsumer extends Consumer implements ConnectionInterface
     }
 }
 
-$flag = 0;
+$flag = 1;
 
 if ($flag) {
     $redis = new \Redis();

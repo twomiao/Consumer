@@ -123,9 +123,9 @@ abstract class Consumer
     protected function forkWorkerForLinux($consumerType, $forkWorkerNum = 1)
     {
         while ($forkWorkerNum > 0 && count(self::$pidMap) < $this->forkMaxWorker) {
-            $pid = pcntl_fork();
             $retry = 0;
             do {
+                $pid = pcntl_fork();
                 if ($pid === 0) {
                     // 清理父进程数据
                     self::$pidMap = self::$consumer = [];
