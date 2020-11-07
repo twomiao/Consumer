@@ -1,4 +1,5 @@
 <?php
+
 namespace Consumer;
 
 interface ConnectionInterface
@@ -8,6 +9,12 @@ interface ConnectionInterface
      * @return Consumer
      */
     public function getQueueConnection(): Consumer;
+
+    /**
+     * 判断是否连接
+     * @return bool
+     */
+    public function isConnected(): bool;
 
     /**
      * 获取数据

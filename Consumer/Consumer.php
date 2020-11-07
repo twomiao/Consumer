@@ -197,7 +197,9 @@ abstract class Consumer
                 if (($remaining = time() - $lastTime) > $this->config['idle_time'] &&
                     $consumerType === Consumer::TEMP_PROCESS
                 ) {
-                    $client->closed();
+                    if($client->isConnected()) {
+                        $client->closed();
+                    }
                     echo "临时进程超过{$remaining}秒没有任务，自动退出." . PHP_EOL;
                     $this->stop();
                 }

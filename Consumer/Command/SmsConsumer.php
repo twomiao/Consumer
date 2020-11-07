@@ -48,6 +48,15 @@ class SmsConsumer extends Consumer implements ConnectionInterface
 
         return $redis->lLen('task:data');
     }
+
+    /**
+     * 判断是否连接
+     * @return bool
+     */
+    public function isConnected(): bool
+    {
+        return $this->client->isConnected();
+    }
 }
 
 $flag = 0;
@@ -64,15 +73,15 @@ if ($flag) {
 
     $config = [
         'memory_limit' => 128,// 128mb
-        'max_consumers' => 200, // 临时+常驻消费者最多：8个
+        'max_consumers' => 38, // 临时+常驻消费者最多：8个
         'task_timeout' => 30, // 任务从队列消费超30秒，消费者退出并记录数据
         'idle_time' => 30, // 临时消费者空闲30秒没任务，自动退出节约资源
         'user' => 'root', // 用户
         'user_group' => 'root', // 用户组
-        'daemonize' => true,
+        'daemonize' => false,
     ];
 
-    $smsConsumer = new SmsConsumer(3, $config);
+    $smsConsumer = new SmsConsumer(8, $config);
 //    $smsConsumer->setMaxWorker(8);
     $smsConsumer->start();
 }
