@@ -69,7 +69,7 @@ if ($flag) {
         'idle_time' => 30, // 临时消费者空闲30秒没任务，自动退出节约资源
         'user' => 'root', // 用户
         'user_group' => 'root', // 用户组
-        'daemonize' => true,
+        'daemonize' => false,
     ];
 
     $smsConsumer = new SmsConsumer(3, $config);

@@ -75,7 +75,7 @@ abstract class Consumer
         'idle_time'    => 30, // 临时消费者空闲30秒没任务，自动退出节约资源
         'user'         => '', // 用户
         'user_group'   => '',  // 用户组
-        'daemonize'    => false, // 守护进程
+        'daemonize' => false, // 守护进程
     ];
 
     /**
@@ -87,15 +87,14 @@ abstract class Consumer
      */
     public function __construct($forkNumber, $config = [])
     {
-        $this->forkNumber     = $forkNumber;
-        $this->config         = array_merge($this->config, $config);
-        $this->forkMaxWorker  = $this->config['max_consumers'];
-        $this->config['user'] = $this->config['user'] ?: get_current_user();
+        $this->forkNumber    = $forkNumber;
+        $this->config        = array_merge($this->config, $config);
+        $this->forkMaxWorker = $this->config['max_consumers'];
+        $this->config['user']= $this->config['user'] ?: get_current_user();
     }
 
     public function start()
     {
-        pcntl_async_signals(true);
         // 环境监察
         $this->checkSapiEnv();
         $this->init();
@@ -110,9 +109,24 @@ abstract class Consumer
         $this->monitorWorkers();
     }
 
+    /**
+     * 配置最大进程数量
+     * 优先级高于配置文件 max_consumers的值
+     * @param $max
+     */
     public function setMaxWorker($max)
     {
         $this->forkMaxWorker = $max;
+    }
+
+    /**
+     * 用户不处理异常,自动保存到日志然后退出进程
+     * @param \Throwable $e
+     */
+    public function globalException(\Throwable $e)
+    {
+        // write log ....
+        echo $e->getMessage() . PHP_EOL;
     }
 
     /**
@@ -122,10 +136,14 @@ abstract class Consumer
      */
     protected function forkWorkerForLinux($consumerType, $forkWorkerNum = 1)
     {
+        \set_exception_handler(
+            [$this, 'globalException']
+        );
+
         while ($forkWorkerNum > 0 && count(self::$pidMap) < $this->forkMaxWorker) {
             $retry = 0;
             do {
-                $pid = pcntl_fork();
+                $pid = \pcntl_fork();
                 if ($pid === 0) {
                     // 清理父进程数据
                     self::$pidMap = self::$consumer = [];
@@ -149,6 +167,7 @@ abstract class Consumer
                 ++$retry;
             } while ($pid < 0 && $retry < 3);
         }
+        \restore_exception_handler();
     }
 
     abstract public function fire($data);
@@ -280,17 +299,17 @@ abstract class Consumer
             \umask(0);
             $pid = \pcntl_fork();
             if (-1 === $pid) {
-                exit( "Error: Fork fail.\n");
+                exit("Error: Fork fail.\n");
             } elseif ($pid > 0) {
                 exit(0);
             }
             if (-1 === \posix_setsid()) {
-                exit( "Error: Setsid fail.\n");
+                exit("Error: Setsid fail.\n");
             }
             // Fork again avoid SVR4 system regain the control of terminal.
             $pid = \pcntl_fork();
             if (-1 === $pid) {
-                exit( "Error: Fork fail.\n");
+                exit("Error: Fork fail.\n");
             } elseif (0 !== $pid) {
                 exit(0);
             }
@@ -320,6 +339,10 @@ abstract class Consumer
         //  特殊路径得知是Windows 系统
         if (\DIRECTORY_SEPARATOR === '\\') {
             throw new \RuntimeException('pcntl extension does not support Windows system.');
+        }
+
+        if (version_compare(PHP_VERSION, '7.1.0', '<')) {
+            exit("php version requirement >= 7.1 \n");
         }
     }
 
@@ -471,6 +494,9 @@ abstract class Consumer
 
     protected function forkTempForLinux($status)
     {
+        \set_exception_handler(
+            [$this, 'globalException']
+        );
         // 消费者总数量
         $consumers = count(self::$pidMap);
 
@@ -478,6 +504,7 @@ abstract class Consumer
         if ($addConsumers > 0 && $this->checkConsumerRebootStatus($status)) {
             $this->forkWorkerForLinux(self::TEMP_PROCESS);
         }
+        \restore_exception_handler();
     }
 
     protected function memorySizeLimit($memoryLimit)
