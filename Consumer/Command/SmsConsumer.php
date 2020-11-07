@@ -17,7 +17,7 @@ class SmsConsumer extends Consumer implements ConnectionInterface
     public function fire($data)
     {
         // 处理业务
-        sleep(mt_rand(1, 1));
+        sleep(mt_rand(3, 10));
         echo '已完成处理数据: ' . $data[1] . PHP_EOL;
     }
 
@@ -64,12 +64,12 @@ if ($flag) {
 
     $config = [
         'memory_limit' => 128,// 128mb
-        'max_consumers' => 50, // 临时+常驻消费者最多：8个
+        'max_consumers' => 200, // 临时+常驻消费者最多：8个
         'task_timeout' => 30, // 任务从队列消费超30秒，消费者退出并记录数据
         'idle_time' => 30, // 临时消费者空闲30秒没任务，自动退出节约资源
         'user' => 'root', // 用户
         'user_group' => 'root', // 用户组
-        'daemonize' => false,
+        'daemonize' => true,
     ];
 
     $smsConsumer = new SmsConsumer(3, $config);

@@ -410,7 +410,7 @@ abstract class Consumer
         // 运行中
         self::$status = self::STATUS_RUNNING;
 
-        while (1) {
+        while (count(self::$pidMap)) {
             // 非阻塞信号
             $status = 8;
             $pid = \pcntl_wait($status, \WNOHANG);
@@ -427,14 +427,9 @@ abstract class Consumer
                 continue;
             }
 
-            // 子进程退出,主进程正常退出
-            if (count(self::$pidMap) < 1) {
-                break;
-            }
-
+            usleep(500000);
             // 创建临时进程
             $this->forkTempForLinux($status);
-            usleep(500000);
         }
     }
 
