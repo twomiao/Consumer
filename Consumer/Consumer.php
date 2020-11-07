@@ -70,11 +70,11 @@ abstract class Consumer
      */
     protected $config = [
         'memory_limit' => 128,// 128mb
-        'max_consumers'=> 8, // 临时+常驻消费者最多：8个
+        'max_consumers' => 8, // 临时+常驻消费者最多：8个
         'task_timeout' => 30, // 任务从队列消费超30秒，消费者退出并记录数据
-        'idle_time'    => 30, // 临时消费者空闲30秒没任务，自动退出节约资源
-        'user'         => '', // 用户
-        'user_group'   => '',  // 用户组
+        'idle_time' => 30, // 临时消费者空闲30秒没任务，自动退出节约资源
+        'user' => '', // 用户
+        'user_group' => '',  // 用户组
         'daemonize' => false, // 守护进程
     ];
 
@@ -87,16 +87,17 @@ abstract class Consumer
      */
     public function __construct($forkNumber, $config = [])
     {
-        $this->forkNumber    = $forkNumber;
-        $this->config        = array_merge($this->config, $config);
+        $this->forkNumber = $forkNumber;
+        $this->config = array_merge($this->config, $config);
         $this->forkMaxWorker = $this->config['max_consumers'];
-        $this->config['user']= $this->config['user'] ?: get_current_user();
+        $this->config['user'] = $this->config['user'] ?: get_current_user();
     }
 
     public function start()
     {
-        // 环境监察
+        // 环境检查
         $this->checkSapiEnv();
+        pcntl_async_signals(true);
         $this->init();
         $this->daemonize();
         // 创建消费者
