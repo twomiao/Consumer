@@ -1,5 +1,5 @@
 <?php
-namespace Consumer;
+namespace Consumer\Consumer;
 
 
 class ExitedCode
@@ -9,6 +9,7 @@ class ExitedCode
     const CONSUMER_BLOCKING = 3; // 超时
     const RELEASE_MEMORY    = 2; // 内存使用超出限制
     const TEMP_CONSUMER     = 4; // 临时消费者退出
+    const TASKS_TOTAL       = 5; // 内存自动释放，并重启
 
     const SUCCESS = 0 ;    // 正常退出
 

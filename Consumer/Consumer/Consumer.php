@@ -1,6 +1,6 @@
 <?php
 
-namespace Consumer;
+namespace Consumer\Consumer;
 
 abstract class Consumer
 {
@@ -65,17 +65,25 @@ abstract class Consumer
     protected $forkNumber = 2;
 
     /**
+     * 队列积累量
+     * @var int $addConsumers
+     */
+    private static $addConsumers = 0;
+
+    /**
      * 基础配置数据
      * @var array $config
      */
     protected $config = [
-        'memory_limit'  => 0, // 默认为配置文件内存的4/1
-        'max_consumers' => 8, // 临时+常驻消费者最多：8个
-        'task_timeout'  => 30, // 任务从队列消费超30秒，消费者退出并记录数据
-        'idle_time'     => 30, // 临时消费者空闲30秒没任务，自动退出节约资源
-        'user'          => '', // 用户
-        'user_group'    => '',  // 用户组
-        'daemonize'     => false, // 守护进程
+        'name'         => 'consumer',
+        'tasks'        => 0, // < 1 永久不退出,否则按照指定任务数量退出
+        'memory_limit' => 0, // 默认为配置文件内存的4/1
+        'max_consumers'=> 8, // 临时+常驻消费者最多：8个
+        'task_timeout' => 30, // 任务从队列消费超30秒，消费者退出并记录数据
+        'idle_time'    => 30, // 临时消费者空闲30秒没任务，自动退出节约资源
+        'user'         => '', // 用户
+        'user_group'   => '',  // 用户组
+        'daemonize'    => false, // 守护进程
     ];
 
     /**
@@ -87,11 +95,11 @@ abstract class Consumer
      */
     public function __construct($forkNumber, $config = [])
     {
-        $this->forkNumber             = $forkNumber;
-        $this->config                 = array_merge($this->config, $config);
+        $this->forkNumber = $forkNumber;
+        $this->config = array_merge($this->config, $config);
         $this->config['memory_limit'] = $this->getIdealMemorySize();
-        $this->forkMaxWorker          = $this->config['max_consumers'];
-        $this->config['user']         = $this->config['user'] ?: get_current_user();
+        $this->forkMaxWorker = $this->config['max_consumers'];
+        $this->config['user'] = $this->config['user'] ?: get_current_user();
     }
 
     public function start()
@@ -117,17 +125,17 @@ abstract class Consumer
      */
     protected function getIdealMemorySize()
     {
-        $idealMemory  = ceil($this->config['memory_limit']);
+        $idealMemory = ceil($this->config['memory_limit']);
 
-        $memory       = strtolower(ini_get('memory_limit'));
-        $targetMemory =  floor(
+        $memory = strtolower(ini_get('memory_limit'));
+        $targetMemory = floor(
             str_replace(
-            'mb', '', $memory
-        ));
+                'mb', '', $memory
+            ));
         return (
             $idealMemory > 0 && $idealMemory <= ini_get('memory_limit')
-        ) ? $idealMemory * 1024 * 1024:
-            floor( ($targetMemory / 4)) * 1024 * 1024;
+        ) ? $idealMemory * 1024 * 1024 :
+            floor(($targetMemory / 4)) * 1024 * 1024;
     }
 
     /**
@@ -147,8 +155,7 @@ abstract class Consumer
     public function globalException(\Throwable $e)
     {
         // write log ....
-        switch ($e->getCode())
-        {
+        switch ($e->getCode()) {
             case ExitedCode::CONSUMER_BLOCKING:
                 // write log ...
 
@@ -158,13 +165,16 @@ abstract class Consumer
             case ExitedCode::RELEASE_MEMORY:
                 // write log ...
                 $code = $e->getCode();
-                $pid  = getmypid();
-                echo $e->getMessage()." pid ({$pid}), Exited code ($code)." . PHP_EOL;
+                $pid = getmypid();
+                echo $e->getMessage() . " pid ({$pid}), Exited code ($code)." . PHP_EOL;
                 // 内存超出预期值;
                 exit($code);
                 break;
             case ExitedCode::SUCCESS:
-                //
+                file_put_contents("master_exited.log", var_export($e,true).PHP_EOL,FILE_APPEND);
+                break;
+            default:
+                file_put_contents("master_exited.log", $e->getMessage().PHP_EOL,FILE_APPEND);
                 break;
         }
     }
@@ -180,16 +190,19 @@ abstract class Consumer
         \set_exception_handler(
             [$this, 'globalException']
         );
-
         while ($forkWorkerNum > 0 && count(self::$pidMap) < $this->forkMaxWorker) {
             $retry = 0;
             do {
                 $pid = \pcntl_fork();
                 if ($pid === 0) {
+                    self::$addConsumers = 0;
                     // 清理父进程数据
                     self::$pidMap = self::$consumer = [];
-                    $processTitle = (Consumer::RESIDENT_PROCESS === $consumerType) ? 'Consumer:worker' : 'Consumer:temp';
+
+                    $name = (Consumer::RESIDENT_PROCESS === $consumerType) ? ':worker':':temp';
+                    $processTitle = ($this->config['name'] ?: 'consumer').$name;
                     self::setProcessTitle($processTitle);
+
                     if (self::$status === self::STATUS_STARTING) {
                         $this->resetStd();
                     }
@@ -228,8 +241,11 @@ abstract class Consumer
         $client = $this->getQueueConnection();
 
         // 记录上次时间
-        $lastTime = time();
+        $lastTime   = time();
+        // 内存初始化
         $initMemory = memory_get_usage();
+        // 任务累计初始化
+        $tasks      = 0;
         while (1) {
             $data = $client->reserve();
 
@@ -254,6 +270,16 @@ abstract class Consumer
 
             // 检查内存
             $this->releaseMemory($initMemory);
+
+            if (intval($this->config['tasks']) > 0 && (++$tasks === $this->config['tasks'])) {
+                if ($client->isConnected()) {
+                    $client->closed();
+                }
+                $pid = getmypid();
+                echo "Pid: {$pid}, 进程完成{$tasks}个任务，自动退出释放内存." . PHP_EOL;
+                file_put_contents("run.log", "Pid: {$pid}, 进程完成{$tasks}个任务，自动退出释放内存." . PHP_EOL, FILE_APPEND);
+                $this->stop(ExitedCode::TASKS_TOTAL);
+            }
         }
     }
 
@@ -286,6 +312,7 @@ abstract class Consumer
         exit($status);
     }
 
+
     /**
      * 消费者阻塞抛出异常退出
      *
@@ -295,7 +322,7 @@ abstract class Consumer
     protected function consumerBlocking($data)
     {
         pcntl_signal(SIGALRM, function () use ($data) {
-            [$pid,$data] = [
+            [$pid, $data] = [
                 getmypid(),
                 var_export($data, true)
             ];
@@ -466,6 +493,7 @@ abstract class Consumer
         while (count(self::$pidMap)) {
             // 非阻塞信号
             $status = ExitedCode::TEMP_CONSUMER;
+
             $pid = \pcntl_wait($status, \WNOHANG);
 
             if ($pid > 0) {
@@ -510,17 +538,17 @@ abstract class Consumer
         \set_exception_handler(
             [$this, 'globalException']
         );
-        // 消费者总数量
-        $consumers = count(self::$pidMap);
-        $addConsumers = ceil($this->length() / $consumers) - $consumers;
-
-        if ($addConsumers > 0 &&
+        if (self::$addConsumers > 0 &&
             self::$status !== self::STATUS_STOP &&
             !isset(ExitedCode::$exitedCodeMap[$status])
-        )
-        {
-            $this->forkWorkerForLinux(self::TEMP_PROCESS);
+        ) {
+            $this->forkWorkerForLinux(self::TEMP_PROCESS,1);
         }
+
+        // 消费者总数量
+        $consumers = count(self::$pidMap);
+
+        self::$addConsumers = ceil($this->length() / $consumers) - $consumers;
         \restore_exception_handler();
     }
 

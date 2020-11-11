@@ -1,6 +1,6 @@
 <?php
 
-namespace Consumer;
+namespace Consumer\Consumer;
 
 class OutOfMemoryException extends \RuntimeException
 {

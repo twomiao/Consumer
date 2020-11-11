@@ -1,12 +1,11 @@
 <?php
 
-namespace Consumer;
+namespace Consumer\Consumer;
 
 interface ConnectionInterface
 {
     /**
      * 创建连接
-     * @return Consumer
      */
     public function getQueueConnection(): Consumer;
 
