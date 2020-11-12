@@ -1,9 +1,13 @@
 <?php
 
+
 namespace Consumer\Consumer;
 
 abstract class Consumer
 {
+
+    use ConnectionManager;
+
     // 进程数量扩展限制
     public $forkMaxWorker = 15;
 
@@ -71,6 +75,12 @@ abstract class Consumer
     private static $addConsumers = 0;
 
     /**
+     * Master
+     * @var string
+     */
+    protected $installSignal = "\\Consumer\\Consumer\\Consumer::installSignal";
+
+    /**
      * 基础配置数据
      * @var array $config
      */
@@ -95,11 +105,11 @@ abstract class Consumer
      */
     public function __construct($forkNumber, $config = [])
     {
-        $this->forkNumber = $forkNumber;
-        $this->config = array_merge($this->config, $config);
+        $this->forkNumber             = $forkNumber;
+        $this->config                 = array_merge($this->config, $config);
+        $this->forkMaxWorker          = $this->config['max_consumers'];
+        $this->config['user']         = $this->config['user'] ?: get_current_user();
         $this->config['memory_limit'] = $this->getIdealMemorySize();
-        $this->forkMaxWorker = $this->config['max_consumers'];
-        $this->config['user'] = $this->config['user'] ?: get_current_user();
     }
 
     public function start()
@@ -116,6 +126,7 @@ abstract class Consumer
         );
         $this->saveMasterPid();
         $this->resetStd();
+        pcntl_signal(SIGINT, $this->installSignal);
         $this->monitorWorkers();
     }
 
@@ -171,10 +182,10 @@ abstract class Consumer
                 exit($code);
                 break;
             case ExitedCode::SUCCESS:
-                file_put_contents("master_exited.log", var_export($e,true).PHP_EOL,FILE_APPEND);
+                file_put_contents(self::$logFile, var_export($e,true).PHP_EOL,FILE_APPEND);
                 break;
             default:
-                file_put_contents("master_exited.log", $e->getMessage().PHP_EOL,FILE_APPEND);
+                file_put_contents(self::$logFile, $e->getMessage().PHP_EOL,FILE_APPEND);
                 break;
         }
     }
@@ -198,6 +209,8 @@ abstract class Consumer
                     self::$addConsumers = 0;
                     // 清理父进程数据
                     self::$pidMap = self::$consumer = [];
+                    // install signal
+                    pcntl_signal(SIGINT, $this->installSignal);
 
                     $name = (Consumer::RESIDENT_PROCESS === $consumerType) ? ':worker':':temp';
                     $processTitle = ($this->config['name'] ?: 'consumer').$name;
@@ -238,7 +251,7 @@ abstract class Consumer
         /**
          * @var $client ConnectionInterface
          */
-        $client = $this->getQueueConnection();
+        $client = $this->getClientConnection();
 
         // 记录上次时间
         $lastTime   = time();
@@ -247,6 +260,10 @@ abstract class Consumer
         // 任务累计初始化
         $tasks      = 0;
         while (1) {
+            if (self::$status === self::STATUS_STOP) {
+                echo "进程收到退出命令，自动退出." . PHP_EOL;
+               $this->stop();
+            }
             $data = $client->reserve();
 
             if (!$data) {
@@ -535,9 +552,6 @@ abstract class Consumer
 
     protected function forkRelieveStressForLinux($status)
     {
-        \set_exception_handler(
-            [$this, 'globalException']
-        );
         if (self::$addConsumers > 0 &&
             self::$status !== self::STATUS_STOP &&
             !isset(ExitedCode::$exitedCodeMap[$status])
@@ -545,6 +559,9 @@ abstract class Consumer
             $this->forkWorkerForLinux(self::TEMP_PROCESS,1);
         }
 
+        \set_exception_handler(
+            [$this, 'globalException']
+        );
         // 消费者总数量
         $consumers = count(self::$pidMap);
 
@@ -569,6 +586,30 @@ abstract class Consumer
             );
         }
     }
+
+    /**
+     * 安装进程信号
+     * @param $signal
+     */
+    protected function installSignal($signal)
+    {
+        switch ($signal) {
+            case SIGINT:
+                self::$status = self::STATUS_STOP;
+                $this->stopConsumer();
+                break;
+        }
+    }
+
+    protected function stopConsumer()
+    {
+        // for master
+       if (self::$masterPid  === getmypid()) {
+           foreach (self::$pidMap as $pid) {
+               @posix_kill($pid, SIGINT);
+           }
+       } else { // for child
+           self::$status = self::STATUS_STOP;
+       }
+    }
 }
-
-

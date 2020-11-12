@@ -15,7 +15,7 @@ class ExitedCode
 
 
     // 消费者不重启代码
-    static $exitedCodeMap  = array(
+    public static $exitedCodeMap  = array(
         self::CONSUMER_BLOCKING,
 //        self::RELEASE_MEMORY,
         self::TEMP_CONSUMER,

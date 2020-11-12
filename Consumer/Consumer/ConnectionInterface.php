@@ -7,28 +7,28 @@ interface ConnectionInterface
     /**
      * 创建连接
      */
-    public function getQueueConnection(): Consumer;
+    public function getClientConnection(): Consumer;
 
     /**
-     * 判断是否连接
+     * 连接是否成功
      * @return bool
      */
     public function isConnected(): bool;
 
     /**
-     * 获取数据
+     * 消费者读取队列数据
      * @return mixed
      */
     public function reserve();
 
     /**
-     * 关闭连接
+     * 消费者关闭连接
      * @return mixed
      */
     public function closed();
 
     /**
-     * 当前任务总数量
+     * 当前队列积累任务总数
      * @return int
      */
     public function length(): int;
