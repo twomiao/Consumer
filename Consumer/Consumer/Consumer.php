@@ -595,7 +595,6 @@ abstract class Consumer
     {
         switch ($signal) {
             case SIGINT:
-                self::$status = self::STATUS_STOP;
                 $this->stopConsumer();
                 break;
         }
@@ -604,12 +603,11 @@ abstract class Consumer
     protected function stopConsumer()
     {
         // for master
+       self::$status = self::STATUS_STOP;
        if (self::$masterPid  === getmypid()) {
            foreach (self::$pidMap as $pid) {
                @posix_kill($pid, SIGINT);
            }
-       } else { // for child
-           self::$status = self::STATUS_STOP;
        }
     }
 }
