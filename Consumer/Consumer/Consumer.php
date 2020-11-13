@@ -136,9 +136,9 @@ abstract class Consumer
      */
     protected function getIdealMemorySize()
     {
-        $idealMemory = ceil($this->config['memory_limit']);
+        $idealMemory  = ceil($this->config['memory_limit']);
 
-        $memory = strtolower(ini_get('memory_limit'));
+        $memory       = strtolower(ini_get('memory_limit'));
         $targetMemory = floor(
             str_replace(
                 'mb', '', $memory
