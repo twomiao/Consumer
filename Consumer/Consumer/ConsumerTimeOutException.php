@@ -1,8 +1,5 @@
 <?php
-
-
 namespace Consumer\Consumer;
-
 
 class ConsumerTimeOutException extends \RuntimeException
 {

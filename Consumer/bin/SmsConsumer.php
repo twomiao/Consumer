@@ -1,12 +1,11 @@
 <?php
 namespace Consumer\Command;
 
-require_once dirname(__DIR__) . '/../vendor/autoload.php';
+require_once dirname(__DIR__,2) . '/vendor/autoload.php';
 
-use Consumer\Consumer\ConnectionInterface;
 use Consumer\Consumer\Consumer;
 
-class SmsConsumer extends Consumer implements ConnectionInterface
+class SmsConsumer extends Consumer
 {
     public function fire($data)
     {
@@ -14,48 +13,6 @@ class SmsConsumer extends Consumer implements ConnectionInterface
         sleep(mt_rand(1, 3));
         $pid = getmypid();
         echo '已完成处理数据: ' . $data[1] . ", pid( {$pid} )" . PHP_EOL;
-    }
-
-    public function reserve()
-    {
-        return $this->getQueueConnection()->brPop('task:data', 2);
-    }
-
-    public function closed()
-    {
-        $client = $this->getQueueConnection();
-        if ($client->isConnected()) {
-            $client->close();
-            unset($client);
-        }
-    }
-
-    public function getClientConnection(): Consumer
-    {
-        // 创建连接
-        $client = $this->setQueueConnection(
-            $client = new \Redis()
-        );
-        $client->pconnect('127.0.0.1', 6379, 0);
-        return $this;
-    }
-
-    public function length(): int
-    {
-        $client = $this->setQueueConnection(
-            $client = new \Redis()
-        );
-        $client->pconnect('127.0.0.1', 6379, 0);
-        return $client->lLen('task:data');
-    }
-
-    /**
-     * 判断是否连接
-     * @return bool
-     */
-    public function isConnected(): bool
-    {
-        return $this->getQueueConnection()->isConnected();
     }
 }
 
@@ -82,7 +39,8 @@ if ($flag) {
         'daemonize'     => false,
     ];
 
-    $smsConsumer = new SmsConsumer(16, $config);
+    $smsConsumer = new SmsConsumer(6, $config);
+
 //    $smsConsumer->setMaxWorker(8);
     $smsConsumer->start();
 }

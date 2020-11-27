@@ -1,13 +1,8 @@
 <?php
-
-
 namespace Consumer\Consumer;
 
 abstract class Consumer
 {
-
-    use ConnectionManager;
-
     // 进程数量扩展限制
     public $forkMaxWorker = 15;
 
@@ -31,6 +26,12 @@ abstract class Consumer
      * @var array $consumer
      */
     protected static $consumer = [];
+
+    /**
+     * 消费者状态 [pid=>status]
+     * @var array $consumerStatus
+     */
+    protected static $consumerStatus = [];
 
     /**
      * 日志文件
@@ -94,6 +95,7 @@ abstract class Consumer
         'user'         => '', // 用户
         'user_group'   => '',  // 用户组
         'daemonize'    => false, // 守护进程
+        'sock_file'    => '' // 可自定义
     ];
 
     /**
@@ -110,6 +112,8 @@ abstract class Consumer
         $this->forkMaxWorker          = $this->config['max_consumers'];
         $this->config['user']         = $this->config['user'] ?: get_current_user();
         $this->config['memory_limit'] = $this->getIdealMemorySize();
+
+        $this->config['sock_file']    = $this->config['sock_file'] ?: "/tmp/".md5(spl_object_hash($this)).'.sock';
     }
 
     public function start()
@@ -206,15 +210,16 @@ abstract class Consumer
             do {
                 $pid = \pcntl_fork();
                 if ($pid === 0) {
+                    $name = (Consumer::RESIDENT_PROCESS === $consumerType) ? ':worker':':temp';
+                    $processTitle = ($this->config['name'] ?: 'consumer').$name;
+                    self::setProcessTitle($processTitle);
+
+                    usleep(500000);
                     self::$addConsumers = 0;
                     // 清理父进程数据
                     self::$pidMap = self::$consumer = [];
                     // install signal
                     pcntl_signal(SIGINT, $this->installSignal);
-
-                    $name = (Consumer::RESIDENT_PROCESS === $consumerType) ? ':worker':':temp';
-                    $processTitle = ($this->config['name'] ?: 'consumer').$name;
-                    self::setProcessTitle($processTitle);
 
                     if (self::$status === self::STATUS_STARTING) {
                         $this->resetStd();
@@ -226,6 +231,7 @@ abstract class Consumer
                 } elseif ($pid) {
                     self::$pidMap[$pid] = $pid;
                     self::$consumer[$pid] = $consumerType;
+                    self::$consumerStatus[$pid] = 'idle';
                     self::$masterPid = getmypid();
                 } else {
                     $this->stop(ExitedCode::FORK_ERROR);
@@ -242,17 +248,11 @@ abstract class Consumer
     /**
      * @param $consumerType
      */
-    private function processingWork($consumerType)
+    protected function processingWork($consumerType)
     {
-        if (!is_subclass_of($this, ConnectionInterface::class)) {
-            return;
-        }
-
-        /**
-         * @var $client ConnectionInterface
-         */
-        $client = $this->getClientConnection();
-
+        //
+        $client = new \Redis();
+        $client->connect('127.0.0.1', '6379');
         // 记录上次时间
         $lastTime   = time();
         // 内存初始化
@@ -264,21 +264,31 @@ abstract class Consumer
                 echo "进程收到退出命令，自动退出." . PHP_EOL;
                $this->stop();
             }
-            $data = $client->reserve();
+            $data = $client->brPop('task:data', 2);
 
             if (!$data) {
+                // 间隔5秒钟,汇报当前状态
+                if (time() - $lastTime >= 5)
+                {
+                    $this->sendMsgToMaster('idle');
+                }
+
                 echo '没有数据消费' . PHP_EOL;
-                if (($remaining = time() - $lastTime) > $this->config['idle_time'] &&
-                    $consumerType === Consumer::TEMP_PROCESS
-                ) {
-                    if ($client->isConnected()) {
-                        $client->closed();
+                if ($consumerType === Consumer::TEMP_PROCESS)
+                {
+                    if (($remaining = time() - $lastTime) > $this->config['idle_time']) {
+                        if ($client->isConnected()) {
+                            $client->close();
+                            unset($client);
+                        }
+                        echo "临时进程超过{$remaining}秒没有任务，自动退出." . PHP_EOL;
+                        $this->stop();
                     }
-                    echo "临时进程超过{$remaining}秒没有任务，自动退出." . PHP_EOL;
-                    $this->stop();
                 }
                 continue;
             }
+
+            $this->sendMsgToMaster('busy');
 
             $this->consumerBlocking($data);
 
@@ -290,12 +300,33 @@ abstract class Consumer
 
             if (intval($this->config['tasks']) > 0 && (++$tasks === $this->config['tasks'])) {
                 if ($client->isConnected()) {
-                    $client->closed();
+                    $client->close();
+                    unset($client);
                 }
                 $pid = getmypid();
                 echo "Pid: {$pid}, 进程完成{$tasks}个任务，自动退出释放内存." . PHP_EOL;
                 file_put_contents("run.log", "Pid: {$pid}, 进程完成{$tasks}个任务，自动退出释放内存." . PHP_EOL, FILE_APPEND);
                 $this->stop(ExitedCode::TASKS_TOTAL);
+            }
+        }
+    }
+
+    protected function sendMsgToMaster(string $consumerStatus)
+    {
+        // 间隔5秒钟,汇报当前状态
+        $client = new \Consumer\Consumer\UnixClient($this->config['sock_file']);
+        try {
+            if ($client->isConnected()) {
+                $data = serialize(['pid' => getmypid(), 'status' => $consumerStatus]);
+                $client->send($data);
+            }
+        } catch (\Exception $e) {
+            echo $e->getMessage() . PHP_EOL;
+        } finally {
+            try {
+                $client->closed();
+            } catch (\Exception $e) {
+                echo $e->getMessage() . PHP_EOL;
             }
         }
     }
@@ -358,21 +389,11 @@ abstract class Consumer
     protected function init()
     {
         self::setProcessTitle('Consumer:master');
-        // Start file.
-        $backtrace = \debug_backtrace();
-        $_startFile = $backtrace[\count($backtrace) - 1]['file'];
 
-        // 启动文件路径
-        $unique_prefix = \str_replace('/', '_', $_startFile);
-
-        // Pid file.
-        // 主进程进程号保存路径
         if (empty(static::$pidFile)) {
-            static::$pidFile = __DIR__ . "/../$unique_prefix.pid";
+            static::$pidFile = __DIR__ . "/../Consumer.pid";
         }
 
-        // Log file.
-        // 创建日志文件 赋予权限 0622
         if (empty(static::$logFile)) {
             static::$logFile = __DIR__ . '/../consumer.log';
         }
@@ -501,11 +522,11 @@ abstract class Consumer
         }
     }
 
-
-    private function monitorWorkers()
+    protected function monitorWorkers()
     {
         // 运行中
         self::$status = self::STATUS_RUNNING;
+        $unixServer = new UnixServer($this->config['sock_file']);
 
         while (count(self::$pidMap)) {
             // 非阻塞信号
@@ -523,12 +544,26 @@ abstract class Consumer
                 // 清理子进程数据
                 unset(self::$pidMap[$pid]);
                 unset(self::$consumer[$pid]);
+                unset(self::$consumerStatus[$pid]);
                 continue;
             }
 
-            usleep(500000);
             // 寻找临时工帮忙
-            $this->forkRelieveStressForLinux($status);
+            $this->forkTemporaryConsumerForLinux($status);
+
+            $unixServer->listen(function($pid, $status) {
+                self::$consumerStatus[$pid] = $status;
+            });
+        }
+    }
+
+    protected function forkTemporaryConsumerForLinux($status)
+    {
+        if (static::$status !== static::STATUS_STOP && !isset(ExitedCode::$exitedCodeMap[$status]))
+        {
+            if (in_array('idle', array_values(self::$consumerStatus), true) === false) {
+                $this->forkWorkerForLinux(self::TEMP_PROCESS,1);
+            }
         }
     }
 
@@ -550,24 +585,6 @@ abstract class Consumer
         }
     }
 
-    protected function forkRelieveStressForLinux($status)
-    {
-        if (self::$addConsumers > 0 &&
-            self::$status !== self::STATUS_STOP &&
-            !isset(ExitedCode::$exitedCodeMap[$status])
-        ) {
-            $this->forkWorkerForLinux(self::TEMP_PROCESS,1);
-        }
-
-        \set_exception_handler(
-            [$this, 'globalException']
-        );
-        // 消费者总数量
-        $consumers = count(self::$pidMap);
-
-        self::$addConsumers = ceil($this->length() / $consumers) - $consumers;
-        \restore_exception_handler();
-    }
 
     /**
      * 释放内存

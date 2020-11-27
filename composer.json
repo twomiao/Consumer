@@ -1,6 +1,7 @@
 {
   "require": {
     "ext-pcntl": "*",
+    "ext-sockets": "*",
     "php": ">=7.1.0"
   },
   "autoload": {

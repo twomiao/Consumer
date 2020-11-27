@@ -1,7 +1,6 @@
 <?php
 namespace Consumer\Consumer;
 
-
 class ExitedCode
 {
     // 1-9
