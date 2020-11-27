@@ -21,7 +21,7 @@ $flag = 0;
 if ($flag) {
     $redis = new \Redis();
     $redis->connect('127.0.0.1', 6379);
-    for ($i = 1; $i <= 100000; $i++) {
+    for ($i = 1; $i <= 1000; $i++) {
         $redis->lPush('task:data', str_repeat('data:' . $i, 1));
     }
     echo 'push tasK:data success, len is:' . $redis->lLen('task:data') . PHP_EOL;
