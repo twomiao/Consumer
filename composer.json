@@ -2,6 +2,7 @@
   "require": {
     "ext-pcntl": "*",
     "ext-sockets": "*",
+    "ext-posix": "*",
     "php": ">=7.1.0"
   },
   "autoload": {

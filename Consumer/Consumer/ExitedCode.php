@@ -13,12 +13,11 @@ class ExitedCode
     const SUCCESS = 0 ;    // 正常退出
 
 
-    // 消费者不重启代码
+    // 消费者退出代码如下，将不会拉取worker
     public static $exitedCodeMap = array(
         self::CONSUMER_BLOCKING => self::CONSUMER_BLOCKING,
 //        self::RELEASE_MEMORY,
         self::TEMP_CONSUMER => self::TEMP_CONSUMER,
-        self::SUCCESS => self::SUCCESS
     );
 
 }

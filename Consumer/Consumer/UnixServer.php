@@ -1,5 +1,4 @@
 <?php
-
 namespace Consumer\Consumer;
 
 class UnixServer

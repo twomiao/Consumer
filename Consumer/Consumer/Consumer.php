@@ -244,7 +244,7 @@ abstract class Consumer
      */
     protected function processingWork($consumerType)
     {
-        //
+        // 这里只是演示
         $client = new \Redis();
         $client->connect('127.0.0.1', '6379');
         // 记录上次时间
@@ -276,7 +276,7 @@ abstract class Consumer
                             unset($client);
                         }
                         echo "临时进程超过{$remaining}秒没有任务，自动退出." . PHP_EOL;
-                        $this->stop();
+                        $this->stop(4);
                     }
                 }
                 continue;
@@ -528,9 +528,6 @@ abstract class Consumer
         $unixServer = new UnixServer( $this->config['sock_file']);
 
         while (count(self::$pidMap)) {
-            // 非阻塞信号
-            $status = ExitedCode::TEMP_CONSUMER;
-
             $pid = \pcntl_wait($status, \WNOHANG);
 
             if ($pid > 0) {
@@ -558,10 +555,10 @@ abstract class Consumer
 
     protected function forkTemporaryConsumerForLinux($status)
     {
-        if (static::$status !== static::STATUS_STOP && !isset(ExitedCode::$exitedCodeMap[$status]))
+        if (static::$status !== static::STATUS_STOP && !array_key_exists($status, ExitedCode::$exitedCodeMap))
         {
             if (in_array('idle', array_values(self::$consumerStatus), true) === false) {
-                $this->forkWorkerForLinux(self::TEMP_PROCESS,1);
+                $this->forkWorkerForLinux(self::TEMP_PROCESS);
             }
         }
     }
