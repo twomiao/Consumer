@@ -553,8 +553,7 @@ abstract class Consumer
                 self::$consumerStatus[$pid] = $status;
             });
         }
-        file_exists(self::$pidFile) && unlink(self::$pidFile);
-        file_exists($this->config['sock_file']) && unlink($this->config['sock_file']);
+        $this->clearSockFile();
     }
 
     protected function forkTemporaryConsumerForLinux($status)
@@ -626,5 +625,19 @@ abstract class Consumer
                @posix_kill($pid, SIGINT);
            }
        }
+    }
+
+    protected function clearSockFile() :void
+    {
+        clearstatcache();
+        if (file_exists(self::$pidFile))
+        {
+            unlink(self::$pidFile);
+        }
+
+        if (file_exists($this->config['sock_file']))
+        {
+            unlink($this->config['sock_file']);
+        }
     }
 }
