@@ -14,11 +14,11 @@ class ExitedCode
 
 
     // 消费者不重启代码
-    public static $exitedCodeMap  = array(
-        self::CONSUMER_BLOCKING,
+    public static $exitedCodeMap = array(
+        self::CONSUMER_BLOCKING => self::CONSUMER_BLOCKING,
 //        self::RELEASE_MEMORY,
-        self::TEMP_CONSUMER,
-        self::SUCCESS
+        self::TEMP_CONSUMER => self::TEMP_CONSUMER,
+        self::SUCCESS => self::SUCCESS
     );
 
 }

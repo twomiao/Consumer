@@ -76,12 +76,6 @@ abstract class Consumer
     private static $addConsumers = 0;
 
     /**
-     * Master
-     * @var string
-     */
-    protected $installSignal = "\\Consumer\\Consumer\\Consumer::installSignal";
-
-    /**
      * 基础配置数据
      * @var array $config
      */
@@ -112,8 +106,7 @@ abstract class Consumer
         $this->forkMaxWorker          = $this->config['max_consumers'];
         $this->config['user']         = $this->config['user'] ?: get_current_user();
         $this->config['memory_limit'] = $this->getIdealMemorySize();
-
-        $this->config['sock_file']    = $this->config['sock_file'] ?: "/tmp/".md5(spl_object_hash($this)).'.sock';
+        $this->config['sock_file']    = $this->getSockFile();
     }
 
     public function start()
@@ -128,9 +121,9 @@ abstract class Consumer
             self::RESIDENT_PROCESS,
             $this->forkNumber
         );
+
         $this->saveMasterPid();
         $this->resetStd();
-        pcntl_signal(SIGINT, $this->installSignal);
         $this->monitorWorkers();
     }
 
@@ -219,7 +212,7 @@ abstract class Consumer
                     // 清理父进程数据
                     self::$pidMap = self::$consumer = [];
                     // install signal
-                    pcntl_signal(SIGINT, $this->installSignal);
+                    pcntl_signal(SIGINT, [$this, 'installSignal']);
 
                     if (self::$status === self::STATUS_STARTING) {
                         $this->resetStd();
@@ -233,6 +226,7 @@ abstract class Consumer
                     self::$consumer[$pid] = $consumerType;
                     self::$consumerStatus[$pid] = 'idle';
                     self::$masterPid = getmypid();
+                    pcntl_signal(SIGINT, [$this, 'installSignal']);
                 } else {
                     $this->stop(ExitedCode::FORK_ERROR);
                 }
@@ -465,6 +459,11 @@ abstract class Consumer
         }
     }
 
+    protected function getSockFile() :string
+    {
+        return $this->config['sock_file'] ?: "/tmp/".md5(spl_object_hash($this)).'.sock';
+    }
+
     /**
      * Set process name.
      *
@@ -526,7 +525,7 @@ abstract class Consumer
     {
         // 运行中
         self::$status = self::STATUS_RUNNING;
-        $unixServer = new UnixServer($this->config['sock_file']);
+        $unixServer = new UnixServer( $this->config['sock_file']);
 
         while (count(self::$pidMap)) {
             // 非阻塞信号
@@ -537,7 +536,6 @@ abstract class Consumer
             if ($pid > 0) {
                 $status = pcntl_wexitstatus($status);
                 echo "子进程退出: status:{$status}, pid:{$pid}, " . self::$consumer[$pid] . PHP_EOL;
-                var_dump($status);
                 // 异常退出
                 $this->rebootConsumer($status, $pid);
 
@@ -555,6 +553,8 @@ abstract class Consumer
                 self::$consumerStatus[$pid] = $status;
             });
         }
+        file_exists(self::$pidFile) && unlink(self::$pidFile);
+        file_exists($this->config['sock_file']) && unlink($this->config['sock_file']);
     }
 
     protected function forkTemporaryConsumerForLinux($status)
@@ -574,7 +574,7 @@ abstract class Consumer
      */
     private function rebootConsumer($status, $pid)
     {
-        if (self::$status !== self::STATUS_STOP && !isset(ExitedCode::$exitedCodeMap[$status])) {
+        if (self::$status !== self::STATUS_STOP && !array_key_exists($status, ExitedCode::$exitedCodeMap)) {
             // 重新创建拉取指定类型的消费者进程
             self::forkWorkerForLinux
             (
@@ -608,7 +608,7 @@ abstract class Consumer
      * 安装进程信号
      * @param $signal
      */
-    protected function installSignal($signal)
+    public function installSignal($signal)
     {
         switch ($signal) {
             case SIGINT:
@@ -621,8 +621,8 @@ abstract class Consumer
     {
         // for master
        self::$status = self::STATUS_STOP;
-       if (self::$masterPid  === getmypid()) {
-           foreach (self::$pidMap as $pid) {
+       if (self::$masterPid === getmypid()) {
+           foreach (self::$pidMap as $key => $pid) {
                @posix_kill($pid, SIGINT);
            }
        }

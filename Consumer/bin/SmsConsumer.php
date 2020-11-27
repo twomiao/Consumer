@@ -39,9 +39,8 @@ if ($flag) {
         'daemonize'     => false,
     ];
 
-    $smsConsumer = new SmsConsumer(6, $config);
-
-//    $smsConsumer->setMaxWorker(8);
+    $smsConsumer = new SmsConsumer(8, $config);
+//  $smsConsumer->setMaxWorker(8);
     $smsConsumer->start();
 }
 
