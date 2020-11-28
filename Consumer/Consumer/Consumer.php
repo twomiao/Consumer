@@ -72,12 +72,6 @@ abstract class Consumer
     protected $forkNumber = 2;
 
     /**
-     * 队列积累量
-     * @var int $addConsumers
-     */
-    private static $addConsumers = 0;
-
-    /**
      * 基础配置数据
      * @var array $config
      */
@@ -209,7 +203,6 @@ abstract class Consumer
                     self::setProcessTitle($processTitle);
 
                     usleep(500000);
-                    self::$addConsumers = 0;
                     // 清理父进程数据
                     self::$consumerStatus = self::$pidMap = self::$consumer = [];
                     // install signal

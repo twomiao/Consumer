@@ -17,7 +17,7 @@ class ExitedCode
     public static $exitedCodeMap = array(
         self::CONSUMER_BLOCKING => self::CONSUMER_BLOCKING,
         self::RELEASE_MEMORY   => self::RELEASE_MEMORY,
-        self::TEMP_CONSUMER          => self::TEMP_CONSUMER,
+        self::TEMP_CONSUMER    => self::TEMP_CONSUMER,
     );
 
 }
