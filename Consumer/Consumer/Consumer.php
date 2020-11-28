@@ -1,6 +1,8 @@
 <?php
 namespace Consumer\Consumer;
 
+pcntl_async_signals(true);
+
 abstract class Consumer
 {
     // 进程数量扩展限制
@@ -113,7 +115,6 @@ abstract class Consumer
     {
         // 环境检查
         $this->checkSapiEnv();
-        pcntl_async_signals(true);
         $this->init();
         $this->daemonize();
         // 创建消费者
@@ -210,7 +211,7 @@ abstract class Consumer
                     usleep(500000);
                     self::$addConsumers = 0;
                     // 清理父进程数据
-                    self::$pidMap = self::$consumer = [];
+                    self::$consumerStatus = self::$pidMap = self::$consumer = [];
                     // install signal
                     pcntl_signal(SIGINT, [$this, 'installSignal']);
 
@@ -261,11 +262,7 @@ abstract class Consumer
             $data = $client->brPop('task:data', 2);
 
             if (!$data) {
-                // 间隔5秒钟,汇报当前状态
-                if (time() - $lastTime >= 5)
-                {
-                    $this->sendMsgToMaster('idle');
-                }
+                $this->sendMsgToMaster('idle');
 
                 echo '没有数据消费' . PHP_EOL;
                 if ($consumerType === Consumer::TEMP_PROCESS)
@@ -307,7 +304,6 @@ abstract class Consumer
 
     protected function sendMsgToMaster(string $consumerStatus)
     {
-        // 间隔5秒钟,汇报当前状态
         $client = new \Consumer\Consumer\UnixClient($this->config['sock_file']);
         try {
             if ($client->isConnected()) {
@@ -525,14 +521,14 @@ abstract class Consumer
     {
         // 运行中
         self::$status = self::STATUS_RUNNING;
-        $unixServer = new UnixServer( $this->config['sock_file']);
-
+        $unixServer   = new UnixServer( $this->config['sock_file']);
         while (count(self::$pidMap)) {
             $pid = \pcntl_wait($status, \WNOHANG);
 
             if ($pid > 0) {
                 $status = pcntl_wexitstatus($status);
                 echo "子进程退出: status:{$status}, pid:{$pid}, " . self::$consumer[$pid] . PHP_EOL;
+
                 // 异常退出
                 $this->rebootConsumer($status, $pid);
 
@@ -544,18 +540,20 @@ abstract class Consumer
             }
 
             // 寻找临时工帮忙
-            $this->forkTemporaryConsumerForLinux($status);
+            $this->forkTemporaryConsumerForLinux();
 
             $unixServer->listen(function($pid, $status) {
-                self::$consumerStatus[$pid] = $status;
+                if (posix_kill($pid, 0)) {
+                    self::$consumerStatus[$pid] = $status;
+                }
             });
         }
         $this->clearSockFile();
     }
 
-    protected function forkTemporaryConsumerForLinux($status)
+    protected function forkTemporaryConsumerForLinux()
     {
-        if (static::$status !== static::STATUS_STOP && !array_key_exists($status, ExitedCode::$exitedCodeMap))
+        if (static::$status !== static::STATUS_STOP)
         {
             if (in_array('idle', array_values(self::$consumerStatus), true) === false) {
                 $this->forkWorkerForLinux(self::TEMP_PROCESS);
@@ -574,8 +572,7 @@ abstract class Consumer
             // 重新创建拉取指定类型的消费者进程
             self::forkWorkerForLinux
             (
-                $consumer = self::$consumer[$pid],
-                1
+                $consumer = self::$consumer[$pid]
             );
             echo "退出代码:{$status}, pid:{$pid}, reboot.\n";
         }
