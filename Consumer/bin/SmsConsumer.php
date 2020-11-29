@@ -7,21 +7,33 @@ use Consumer\Consumer\Consumer;
 
 class SmsConsumer extends Consumer
 {
-    public function fire($data)
+    public function handle($data)
     {
         // 处理业务
-        sleep(mt_rand(5, 30));
+        sleep(mt_rand(1, 3));
         $pid = getmypid();
         echo '已完成处理数据: ' . $data[1] . ", pid( {$pid} )" . PHP_EOL;
     }
+
+    /**
+     * 1. 如果抛出异常发生任务阻塞自动退出
+     * 2. 记录异常对象到日志，具体可自定义处理
+     * @param $e
+     * @return mixed
+     */
+    public function blocking($e)
+    {
+        // 1.
+        throw $e;
+    }
 }
 
-$flag = 1;
+$flag = 0;
 
 if ($flag) {
     $redis = new \Redis();
     $redis->connect('127.0.0.1', 6379);
-    for ($i = 1; $i <= 1000; $i++) {
+    for ($i = 1; $i <= 500; $i++) {
         $redis->lPush('task:data', str_repeat('data:' . $i, 1));
     }
     echo 'push tasK:data success, len is:' . $redis->lLen('task:data') . PHP_EOL;
@@ -36,7 +48,8 @@ if ($flag) {
         'idle_time'     => 30,     // 临时消费者空闲30秒没任务，自动退出节约资源
         'user'          => 'root', // 用户
         'user_group'    => 'root', // 用户组
-        'daemonize'     => true,
+        'daemonize'     => false,  // 守护进程
+        'logger'        => __DIR__ . '/../logs' // 日志目录
     ];
 
     $smsConsumer = new SmsConsumer(4, $config);

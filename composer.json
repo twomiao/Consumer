@@ -3,7 +3,8 @@
     "ext-pcntl": "*",
     "ext-sockets": "*",
     "ext-posix": "*",
-    "php": ">=7.1.0"
+    "php": ">=7.1.0",
+    "katzgrau/klogger": "^1.2"
   },
   "autoload": {
     "psr-4": {

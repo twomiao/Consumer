@@ -1,6 +1,13 @@
 <?php
 namespace Consumer\Consumer;
 
+use Consumer\Consumer\Exception\AbnormalWorkloadException;
+use Consumer\Consumer\Exception\ConsumerTimeOutException;
+use Consumer\Consumer\Exception\ForkFailError;
+use Consumer\Consumer\Exception\IdleTimeoutException;
+use Katzgrau\KLogger\Logger;
+use Psr\Log\LoggerInterface;
+
 pcntl_async_signals(true);
 
 abstract class Consumer
@@ -36,12 +43,6 @@ abstract class Consumer
     protected static $consumerStatus = [];
 
     /**
-     * 日志文件
-     * @var $logFile
-     */
-    protected static $logFile;
-
-    /**
      * 当前运行状态
      * @var $status
      */
@@ -66,6 +67,16 @@ abstract class Consumer
     protected static $stdoutFile = '/dev/null';
 
     /**
+     * @var $logger Log
+     */
+    protected $logger;
+
+    /**
+     * @var $consumerType
+     */
+    protected static $consumerType;
+
+    /**
      * 创建指定常驻进程数量
      * @var int
      */
@@ -85,7 +96,8 @@ abstract class Consumer
         'user'         => '', // 用户
         'user_group'   => '',  // 用户组
         'daemonize'    => false, // 守护进程
-        'sock_file'    => '' // 可自定义
+        'sock_file'    => '', // 可自定义
+        'logger'       => '' // 日志设置
     ];
 
     /**
@@ -103,6 +115,7 @@ abstract class Consumer
         $this->config['user']         = $this->config['user'] ?: get_current_user();
         $this->config['memory_limit'] = $this->getIdealMemorySize();
         $this->config['sock_file']    = $this->getSockFile();
+        $this->config['logger']       = $this->getLogger();
     }
 
     public function start()
@@ -155,92 +168,114 @@ abstract class Consumer
      * 用户不处理异常,自动保存到日志然后退出进程
      * @param \Throwable $e
      */
-    public function globalException(\Throwable $e)
+    public function onException(\Throwable $e)
     {
         // write log ....
         switch ($e->getCode()) {
-            case ExitedCode::CONSUMER_BLOCKING:
-                // write log ...
 
+            case ExitedCode::CONSUMER_BLOCKING:  // 任务阻塞
                 echo $e->getMessage() . PHP_EOL;
-                // 阻塞任务;
-                exit($e->getCode());
-            case ExitedCode::RELEASE_MEMORY:
-                // write log ...
-                $code = $e->getCode();
-                $pid = getmypid();
-                echo $e->getMessage() . " pid ({$pid}), Exited code ($code)." . PHP_EOL;
-                // 内存超出预期值;
-                exit($code);
                 break;
+
+            case ExitedCode::RELEASE_MEMORY:    // 内存超出预期值;
+                echo $e->getMessage() . PHP_EOL;
+                break;
+
+            case ExitedCode::TASKS_TOTAL:      // 完成累计任务自动退出
+                echo $e->getMessage() . PHP_EOL;
+                break;
+
             case ExitedCode::SUCCESS:
-                file_put_contents(self::$logFile, var_export($e,true).PHP_EOL,FILE_APPEND);
-                break;
-            default:
-                file_put_contents(self::$logFile, $e->getMessage().PHP_EOL,FILE_APPEND);
+                echo $e->getMessage() . PHP_EOL; // 正常退出
                 break;
         }
+        // write log ...
+        $this->logger->record($e);
+        // 设置退出状态代码
+        exit($e->getCode());
     }
-
 
     /**
      * 创建消费者子进程
-     * @param string $consumerType
+     *
+     * @param $consumerType
      * @param int $forkWorkerNum
+     * @throws ForkFailError
      */
     protected function forkWorkerForLinux($consumerType, $forkWorkerNum = 1)
     {
-        \set_exception_handler(
-            [$this, 'globalException']
-        );
         while ($forkWorkerNum > 0 && count(self::$pidMap) < $this->forkMaxWorker) {
             $retry = 0;
             do {
                 $pid = \pcntl_fork();
-                if ($pid === 0) {
-                    $name = (Consumer::RESIDENT_PROCESS === $consumerType) ? ':worker':':temp';
-                    $processTitle = ($this->config['name'] ?: 'consumer').$name;
-                    self::setProcessTitle($processTitle);
+                try
+                {
+                    if ($pid === 0) {
+                        $processTitle        = $this->getConsumerName($consumerType);
+                        self::setProcessTitle($processTitle);
 
-                    usleep(500000);
-                    // 清理父进程数据
-                    self::$consumerStatus = self::$pidMap = self::$consumer = [];
-                    // install signal
-                    pcntl_signal(SIGINT, [$this, 'installSignal']);
+                        // 消费者类型
+                        self::$consumerType  = $consumerType;
 
-                    if (self::$status === self::STATUS_STARTING) {
-                        $this->resetStd();
+                        usleep(500000);
+                        // 清理父进程数据
+                        self::$consumerStatus = self::$pidMap = self::$consumer = [];
+                        // install signal
+                        pcntl_signal(SIGINT, [$this, 'installSignal']);
+
+                        if (self::$status === self::STATUS_STARTING) {
+                            $this->resetStd();
+                        }
+                        try
+                        {
+                            // 执行任务
+                            $this->processingWork($consumerType);
+                        } catch (\Throwable $e) {
+                            // write log
+                            $this->onException($e);
+                        }
+                        return;
+                    } elseif ($pid) {
+                        self::$pidMap[$pid] = $pid;
+                        self::$consumer[$pid] = $consumerType;
+                        self::$consumerStatus[$pid] = 'idle';
+                        self::$masterPid = getmypid();
+                        pcntl_signal(SIGINT, [$this, 'installSignal']);
+                    } else {
+                        throw new ForkFailError("Fork process failed.", ExitedCode::FORK_ERROR);
                     }
-                    // 执行任务
-                    $this->processingWork($consumerType);
-
-                    $this->stop();
-                } elseif ($pid) {
-                    self::$pidMap[$pid] = $pid;
-                    self::$consumer[$pid] = $consumerType;
-                    self::$consumerStatus[$pid] = 'idle';
-                    self::$masterPid = getmypid();
-                    pcntl_signal(SIGINT, [$this, 'installSignal']);
-                } else {
-                    $this->stop(ExitedCode::FORK_ERROR);
+                } catch (ForkFailError $error) {
+                    ++$retry;
+                    // write log ....
                 }
+
                 $forkWorkerNum--;
-                ++$retry;
-            } while ($pid < 0 && $retry < 3);
+            } while ($pid < 0 && $retry <= 3);
         }
-        \restore_exception_handler();
     }
 
-    abstract public function fire($data);
+    /**
+     * @param $data
+     * @return mixed
+     */
+    abstract public function handle($data);
+
+    /**
+     * 1. 如果抛出异常发生任务阻塞自动退出
+     * 2. 记录异常对象到日志，具体可自定义处理
+     * @param $e
+     * @return mixed
+     */
+    abstract public function blocking($e);
 
     /**
      * @param $consumerType
      */
     protected function processingWork($consumerType)
     {
-        // 这里只是演示
+        // 仅用于演示
         $client = new \Redis();
-        $client->connect('127.0.0.1', '6379');
+        $client->pconnect('127.0.0.1', '6379');
         // 记录上次时间
         $lastTime   = time();
         // 内存初始化
@@ -252,6 +287,7 @@ abstract class Consumer
                 echo "进程收到退出命令，自动退出." . PHP_EOL;
                $this->stop();
             }
+
             $data = $client->brPop('task:data', 2);
 
             if (!$data) {
@@ -266,7 +302,11 @@ abstract class Consumer
                             unset($client);
                         }
                         echo "临时进程超过{$remaining}秒没有任务，自动退出." . PHP_EOL;
-                        $this->stop(4);
+                        $type = $this->getConsumerName($consumerType);
+                        $pid  = getmypid();
+                        throw new IdleTimeoutException(
+                            "(worker #{$pid} Types of {$type}), Auto exit when idle for {$remaining} seconds."
+                        );
                     }
                 }
                 continue;
@@ -274,24 +314,79 @@ abstract class Consumer
 
             $this->sendMsgToMaster('busy');
 
-            $this->consumerBlocking($data);
+            $this->checkConsumerTimeout($data);
 
             // 标记任务处理完成时间
             $lastTime = time();
 
-            // 检查内存
-            $this->releaseMemory($initMemory);
+            // 内存占用超过配置文件退出当前消费者
+            $this->checkMaxMemorySize($initMemory);
 
-            if (intval($this->config['tasks']) > 0 && (++$tasks === $this->config['tasks'])) {
-                if ($client->isConnected()) {
-                    $client->close();
-                    unset($client);
-                }
-                $pid = getmypid();
-                echo "Pid: {$pid}, 进程完成{$tasks}个任务，自动退出释放内存." . PHP_EOL;
-                file_put_contents("run.log", "Pid: {$pid}, 进程完成{$tasks}个任务，自动退出释放内存." . PHP_EOL, FILE_APPEND);
-                $this->stop(ExitedCode::TASKS_TOTAL);
+            $tasks++;
+            // 累计完成任务量自动退出
+            $this->checkNumberOfTasks($tasks, $client);
+        }
+    }
+
+    /**
+     * 创建日志目录
+     * @throws \InvalidArgumentException
+     * @return Log
+     */
+    protected function getLogger()
+    {
+        $loggerDir  = $this->config['logger'] ?: __DIR__.'/../logs';
+
+        if (!is_string($loggerDir)) {
+            throw new \InvalidArgumentException("Incorrect log directory type.");
+        }
+
+        $logger = new Logger($loggerDir);
+
+        if ($logger && $logger instanceof LoggerInterface) {
+            return $this->logger = new Log($logger);
+        }
+
+        $logger = is_object($logger) ? get_class($logger) : 'null';
+        throw new \InvalidArgumentException("[$logger] LoggerInterface is not implemented.");
+    }
+
+    /**
+     * 获取消费者类型
+     * @param $consumerType
+     * @return string
+     */
+    protected function getConsumerName($consumerType)
+    {
+        $name = ($this->config['name'] ?: 'consumer');
+
+        switch ($consumerType)
+        {
+            case Consumer::TEMP_PROCESS:
+                return "{$name}:temp";
+            case Consumer::RESIDENT_PROCESS:
+                return "{$name}:worker";
+        }
+        return "{$name}:none";
+    }
+
+    /**
+     * @param $current
+     * @param $client \Redis
+     * @throws AbnormalWorkloadException
+     */
+    protected function checkNumberOfTasks($current, $client)
+    {
+        if (intval($this->config['tasks']) > 0 && ($current === $this->config['tasks'])) {
+            if ($client->isConnected()) {
+                $client->close();
+                unset($client);
             }
+            $pid  = getmypid();
+            $type = $this->getConsumerName(self::$consumerType);
+            throw new AbnormalWorkloadException(
+                "(worker #{$pid} Types of {$type}) auto exited, Total number of tasks: ({$current})."
+            );
         }
     }
 
@@ -350,23 +445,36 @@ abstract class Consumer
      * 队列数据
      * @param $data
      */
-    protected function consumerBlocking($data)
+    protected function checkConsumerTimeout($data)
     {
-        pcntl_signal(SIGALRM, function () use ($data) {
-            [$pid, $data] = [
-                getmypid(),
-                var_export($data, true)
-            ];
-            throw new ConsumerTimeOutException(
-                "Consumer timed out for {$this->config['task_timeout']} seconds, the data is:{$data}, pid:{$pid}"
-            );
-        });
+        try
+        {
+            pcntl_signal(SIGALRM, function () use ($data) {
+                // redis data
+                $return       = var_export($data, true);
+                // pid
+                $pid          = getmypid();
+                // 任务超时秒数
+                $seconds      = $this->config['task_timeout'];
 
-        pcntl_alarm($this->config['task_timeout']);
+                $type = $this->getConsumerName(self::$consumerType);
 
-        $this->fire($data);
+                throw new ConsumerTimeOutException(
+                    "(worker #{$pid} Types of {$type}), The child process blocks for {$seconds} seconds, data is:{$return}."
+                );
+            });
 
-        pcntl_alarm(0);
+            pcntl_alarm($this->config['task_timeout']);
+
+            $this->handle($data);
+
+            pcntl_alarm(0);
+
+        } catch (ConsumerTimeOutException $e) {
+            $e->setData($data);
+            // 当前任务阻塞异常
+            $this->blocking($e);
+        }
     }
 
     protected function init()
@@ -375,15 +483,6 @@ abstract class Consumer
 
         if (empty(static::$pidFile)) {
             static::$pidFile = __DIR__ . "/../Consumer.pid";
-        }
-
-        if (empty(static::$logFile)) {
-            static::$logFile = __DIR__ . '/../consumer.log';
-        }
-        $log_file = (string)static::$logFile;
-        if (!\is_file($log_file)) {
-            \touch($log_file);
-            \chmod($log_file, 0622);
         }
 
         $this->setUserAndGroup();
@@ -559,7 +658,7 @@ abstract class Consumer
      * @param $status
      * @param $pid
      */
-    private function rebootConsumer($status, $pid)
+    protected function rebootConsumer($status, $pid)
     {
         if (self::$status !== self::STATUS_STOP && !array_key_exists($status, ExitedCode::$exitedCodeMap)) {
             // 重新创建拉取指定类型的消费者进程
@@ -576,7 +675,7 @@ abstract class Consumer
      * 释放内存
      * @param $initMemory
      */
-    protected function releaseMemory($initMemory)
+    protected function checkMaxMemorySize($initMemory)
     {
         // 内存占用
         $usedMemory = memory_get_usage() - $initMemory;
@@ -584,8 +683,12 @@ abstract class Consumer
         $outOfMemory = $usedMemory > $this->config['memory_limit'];
 
         if ($outOfMemory) {
+            $pid  = getmypid();
+            $type = $this->getConsumerName(self::$consumerType);
+            $limitMemory  = $this->config['memory_limit'];
+
             throw new OutOfMemoryException(
-                "Allowed memory size of {$this->config['memory_limit']} bytes exhausted (tried to allocate {$usedMemory} bytes)."
+                "(worker #{$pid} Types of {$type}), Memory limit size: {$limitMemory} bytes, memory exceeding: {$usedMemory} bytes."
             );
         }
     }
