@@ -242,11 +242,11 @@ abstract class Consumer
                         self::$masterPid = getmypid();
                         pcntl_signal(SIGINT, [$this, 'installSignal']);
                     } else {
-                        throw new ForkFailError("Fork process failed.", ExitedCode::FORK_ERROR);
+                        $retry++;
+                        throw new ForkFailError("Fork({$retry}) process failed.", ExitedCode::FORK_ERROR);
                     }
                 } catch (ForkFailError $error) {
-                    ++$retry;
-                    // write log ....
+                    $this->logger->record($error);  // write log ....
                 }
 
                 $forkWorkerNum--;
@@ -339,6 +339,12 @@ abstract class Consumer
 
         if (!is_string($loggerDir)) {
             throw new \InvalidArgumentException("Incorrect log directory type.");
+        }
+
+        $loggerDir  = strpos($loggerDir, DIRECTORY_SEPARATOR);
+        if($loggerDir !== 0)
+        {
+            throw new \InvalidArgumentException("$loggerDir Invalid log directory.");
         }
 
         $logger = new Logger($loggerDir);
