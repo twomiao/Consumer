@@ -341,8 +341,8 @@ abstract class Consumer
             throw new \InvalidArgumentException("Incorrect log directory type.");
         }
 
-        $dirname    = strpos($loggerDir, DIRECTORY_SEPARATOR);
-        if($dirname !== 0)
+        $withStart   = strpos($loggerDir, DIRECTORY_SEPARATOR);
+        if($withStart !== 0)
         {
             throw new \InvalidArgumentException("{$loggerDir} Invalid log directory.");
         }
