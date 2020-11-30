@@ -25,9 +25,9 @@ class Log
         if ($e instanceof \Error) {
             $this->logger->error($e->getMessage());
         } elseif ($e instanceof \RuntimeException) {
-            $this->logger->warning($e->getMessage());
+            $this->logger->debug($e->getMessage());
         } else {
-            $this->logger->notice($e->getMessage());
+            $this->logger->warning($e->getMessage());
         }
     }
 }

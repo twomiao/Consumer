@@ -49,22 +49,24 @@ class UnixServer
         if (socket_listen($this->unixServer, 2048) === false) {
             throw new \RuntimeException("socket_listen(#socket) fail: " . $this->getSocketLastError());
         }
+        socket_set_nonblock($this->unixServer);
         $this->clients[] = $this->unixServer;
     }
 
-    public function listen(callable  $call)
+    public function listen(callable $call)
     {
         $this->readSocks = $this->clients;
         if (@socket_select($this->readSocks, $this->writeSocks, $this->excepts, 1, 0) > 0) {
             if (in_array($this->unixServer, $this->readSocks)) {
-                socket_set_nonblock($this->unixServer);
-                $this->clients[] = socket_accept($this->unixServer);
+                $client = socket_accept($this->unixServer);
+                socket_set_nonblock($client);
+                $this->clients[] = $client;
                 $index = array_search($this->unixServer, $this->readSocks);
                 unset($this->readSocks[$index]);
             }
 
             foreach ($this->readSocks as $key => $read_sock) {
-                $flag = socket_recv($read_sock, $data, 2048, 0);
+                $flag = socket_recv($read_sock, $data, 1024, 0);
 
                 if ($flag === false) {
 //                    print(socket_strerror(socket_last_error($read_sock)));
