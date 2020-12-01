@@ -1,6 +1,7 @@
 ### Consumer 简介：
 > Pcntl 扩展实现高效率多进程消费，因此只支持Linux。进程模型类似于PHP-FPM 动态进程池。<br/>
-> 进程模型： 主进程 + 临时进程 + 常驻进程
+> 进程模型：主进程 + 临时进程 + 常驻进程。
+> <br /><img src="https://img-blog.csdnimg.cn/20201201225915997.gif" width="700" height="300" alt="动态进程池"/>
 
 * Consumer 优点: 
    * 多进程运用多核CPU  √
@@ -12,14 +13,13 @@
    * 子进程处理完成指定任务数量，自动退出防止内存泄漏：可自定义  √
    * SIGINT 通知全部子进程退出  √
    * 记录日志文件：可自定义 √
-   * More …… ……
   
 ### 环境要求
 
 * PHP >= 7.1.0
 * Pcntl
 
-#### 启动命令：
+#### 自定义动态池：
 ```
 <?php
 namespace Consumer\Command;
