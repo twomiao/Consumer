@@ -7,7 +7,7 @@ use Consumer\Consumer\Consumer;
 
 class SmsConsumer extends Consumer
 {
-    public function handle($data)
+    public function execute($data)
     {
         // 处理业务
         sleep(mt_rand(1, 3));
@@ -33,7 +33,7 @@ $flag = 0;
 if ($flag) {
     $redis = new \Redis();
     $redis->connect('127.0.0.1', 6379);
-    for ($i = 1; $i <= 500; $i++) {
+    for ($i = 1; $i <= 1000; $i++) {
         $redis->lPush('task:data', str_repeat('data:' . $i, 1));
     }
     echo 'push tasK:data success, len is:' . $redis->lLen('task:data') . PHP_EOL;

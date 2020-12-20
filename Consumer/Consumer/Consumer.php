@@ -83,6 +83,17 @@ abstract class Consumer
     protected $forkNumber = 2;
 
     /**
+     * @var $unixServer  UnixServer
+     */
+    protected $unixServer = null;
+
+    /**
+     * 子类运行逻辑的方法
+     * @var array $method
+     */
+    protected $method = 'execute';
+
+    /**
      * 基础配置数据
      * @var array $config
      */
@@ -125,10 +136,7 @@ abstract class Consumer
         $this->init();
         $this->daemonize();
         // 创建消费者
-        $this->forkWorkerForLinux(
-            self::RESIDENT_PROCESS,
-            $this->forkNumber
-        );
+        $this->forkWorkerForLinux(self::RESIDENT_PROCESS, $this->forkNumber);
 
         $this->saveMasterPid();
         $this->resetStd();
@@ -211,14 +219,15 @@ abstract class Consumer
                 try
                 {
                     if ($pid === 0) {
-                        $processTitle        = $this->getConsumerName($consumerType);
+                        $processTitle = $this->getConsumerName($consumerType);
                         self::setProcessTitle($processTitle);
 
                         // 消费者类型
-                        self::$consumerType  = $consumerType;
+                        self::$consumerType   = $consumerType;
 
                         usleep(500000);
                         // 清理父进程数据
+                        $this->unixServer     = null;
                         self::$consumerStatus = self::$pidMap = self::$consumer = [];
                         // install signal
                         pcntl_signal(SIGINT, [$this, 'installSignal']);
@@ -226,6 +235,7 @@ abstract class Consumer
                         if (self::$status === self::STATUS_STARTING) {
                             $this->resetStd();
                         }
+
                         try
                         {
                             // 执行任务
@@ -258,7 +268,7 @@ abstract class Consumer
      * @param $data
      * @return mixed
      */
-    abstract public function handle($data);
+    abstract public function execute($data);
 
     /**
      * 1. 如果抛出异常发生任务阻塞自动退出
@@ -277,11 +287,13 @@ abstract class Consumer
         $client = new \Redis();
         $client->pconnect('127.0.0.1', '6379');
         // 记录上次时间
-        $lastTime   = time();
+        $lastTime     = time();
         // 内存初始化
-        $initMemory = memory_get_usage();
+        $initMemory   = memory_get_usage();
         // 任务累计初始化
-        $tasks      = 0;
+        $tasks        = 0;
+        // 当前worker 设置为运行中
+        self::$status = self::STATUS_RUNNING;
         while (1) {
             if (self::$status === self::STATUS_STOP) {
                 echo "进程收到退出命令，自动退出." . PHP_EOL;
@@ -472,7 +484,7 @@ abstract class Consumer
 
             pcntl_alarm($this->config['task_timeout']);
 
-            $this->handle($data);
+            call_user_func_array([$this, $this->method], [$data]);
 
             pcntl_alarm(0);
 
@@ -617,9 +629,9 @@ abstract class Consumer
 
     protected function monitorWorkers()
     {
-        // 运行中
         self::$status = self::STATUS_RUNNING;
-        $unixServer   = new UnixServer( $this->config['sock_file']);
+        $this->unixServer  = new UnixServer( $this->config['sock_file']);
+
         while (count(self::$pidMap)) {
             $pid = \pcntl_wait($status, \WNOHANG);
 
@@ -640,7 +652,7 @@ abstract class Consumer
             // 寻找临时工帮忙
             $this->forkTemporaryConsumerForLinux();
 
-            $unixServer->listen(function($pid, $status) {
+            $this->unixServer->listen(function($pid, $status) {
                 if (posix_kill($pid, 0)) {
                     self::$consumerStatus[$pid] = $status;
                 }
