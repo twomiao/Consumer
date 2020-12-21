@@ -1,5 +1,5 @@
 ### Consumer 简介：
-> Pcntl 扩展实现高效率多进程消费，因此只支持Linux。进程模型类似于PHP-FPM 动态进程池。<br/>
+> Pcntl 扩展实现高效率动态进程池消费，因此只支持Linux。进程模型类似于PHP-FPM 动态进程池。<br/>
 > 进程模型：主进程 + 临时进程 + 常驻进程。
 > <br /><img src="https://img-blog.csdnimg.cn/20201201225915997.gif" width="700" height="300" alt="动态进程池"/>
 
@@ -79,8 +79,6 @@ if ($flag) {
 //  $smsConsumer->setMaxWorker(8);
     $smsConsumer->start();
 }
-
-
 ```
 
 ### License
