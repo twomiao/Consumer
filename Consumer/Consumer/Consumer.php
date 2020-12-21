@@ -83,11 +83,6 @@ abstract class Consumer
     protected $forkNumber = 2;
 
     /**
-     * @var $unixServer  UnixServer
-     */
-    protected $unixServer = null;
-
-    /**
      * 子类运行逻辑的方法
      * @var array $method
      */
@@ -131,13 +126,10 @@ abstract class Consumer
 
     public function start()
     {
-        // 环境检查
         $this->checkSapiEnv();
         $this->init();
         $this->daemonize();
-        // 创建消费者
         $this->forkWorkerForLinux(self::RESIDENT_PROCESS, $this->forkNumber);
-
         $this->saveMasterPid();
         $this->resetStd();
         $this->monitorWorkers();
@@ -227,7 +219,6 @@ abstract class Consumer
 
                         usleep(500000);
                         // 清理父进程数据
-                        $this->unixServer     = null;
                         self::$consumerStatus = self::$pidMap = self::$consumer = [];
                         // install signal
                         pcntl_signal(SIGINT, [$this, 'installSignal']);
@@ -630,7 +621,7 @@ abstract class Consumer
     protected function monitorWorkers()
     {
         self::$status = self::STATUS_RUNNING;
-        $this->unixServer  = new UnixServer( $this->config['sock_file']);
+        $unixServer  = new UnixServer( $this->config['sock_file']);
 
         while (count(self::$pidMap)) {
             $pid = \pcntl_wait($status, \WNOHANG);
@@ -652,7 +643,7 @@ abstract class Consumer
             // 寻找临时工帮忙
             $this->forkTemporaryConsumerForLinux();
 
-            $this->unixServer->listen(function($pid, $status) {
+            $unixServer->listen(function($pid, $status) {
                 if (posix_kill($pid, 0)) {
                     self::$consumerStatus[$pid] = $status;
                 }

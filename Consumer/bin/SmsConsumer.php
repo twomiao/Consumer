@@ -40,7 +40,7 @@ if ($flag) {
     $redis->close();
 } else {
     $config = [
-        'name'          => 'delay:order',
+        'name'          => 'delay-order',
         'tasks'         => 5000,   // < 1 永久不退出,否则按照指定任务数量退出
         'memory_limit'  => 1,      // 默认是配置文件4/1内存限制,单位:MB
         'max_consumers' => 20,     // 临时+常驻消费者最多：8个
