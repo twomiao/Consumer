@@ -13,22 +13,22 @@ pcntl_async_signals(true);
 abstract class Consumer
 {
     // 进程数量扩展限制
-    public $forkMaxWorker = 15;
+    public $forkMaxWorker  = 15;
 
     // 临时进程,常驻进程
-    const TEMP_PROCESS = 'temp';
+    const TEMP_PROCESS     = 'temp';
     const RESIDENT_PROCESS = 'resident';
 
     // 运行状态
-    const STATUS_STARTING = 1;
-    const STATUS_STOP = 2;
-    const STATUS_RUNNING = 3;
+    const STATUS_STARTING  = 1;
+    const STATUS_STOP      = 2;
+    const STATUS_RUNNING   = 3;
 
     /**
      * 进程PID
      * @var array $pidMap
      */
-    protected static $pidMap = [];
+    protected static $pidMap  = [];
 
     /**
      * 消费者类型
@@ -86,7 +86,7 @@ abstract class Consumer
      * 子类运行逻辑的方法
      * @var array $method
      */
-    protected $method = 'execute';
+    protected $method    = 'execute';
 
     /**
      * 基础配置数据
@@ -103,7 +103,8 @@ abstract class Consumer
         'user_group'   => '',  // 用户组
         'daemonize'    => false, // 守护进程
         'sock_file'    => '', // 可自定义
-        'logger'       => '' // 日志设置
+        'logger'       => '', // 日志设置
+        'intervals'    => 10, // 每间隔10秒钟，汇报一次状态(busy, idle)
     ];
 
     /**
@@ -285,6 +286,9 @@ abstract class Consumer
         $tasks        = 0;
         // 当前worker 设置为运行中
         self::$status = self::STATUS_RUNNING;
+        // 消息发送时间
+        $sentTime     = time();
+
         while (1) {
             if (self::$status === self::STATUS_STOP) {
                 echo "进程收到退出命令，自动退出." . PHP_EOL;
@@ -294,7 +298,12 @@ abstract class Consumer
             $data = $client->brPop('task:data', 2);
 
             if (!$data) {
-                $this->sendMsgToMaster('idle');
+                // >=10s 汇报当前状态给主进程
+                if ((time() - $sentTime) >= $this->config['intervals'])
+                {
+                    $this->sendMsgToMaster('idle');
+                    $sentTime = time();
+                }
 
                 echo '没有数据消费' . PHP_EOL;
                 if ($consumerType === Consumer::TEMP_PROCESS)
@@ -315,7 +324,11 @@ abstract class Consumer
                 continue;
             }
 
-            $this->sendMsgToMaster('busy');
+            if ((time() - $sentTime) >= $this->config['intervals'])
+            {
+                $this->sendMsgToMaster('busy');
+                $sentTime = time();
+            }
 
             $this->checkConsumerTimeout($data);
 
